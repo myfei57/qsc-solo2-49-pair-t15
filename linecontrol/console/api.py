@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from flask import Request
 
 from ..domain.events import Event
@@ -9,6 +11,9 @@ from ..domain.kinds import EventKind
 from ..line.machine import Line
 from ..line.workflow import CycleInput
 from ..store.snapshot import snapshot_type_names
+from .idempotency import REPLAY_MARKER, Idempotency
+
+LOGGER = logging.getLogger("linecontrol.console")
 
 #: Number of recent process events kept for the live event endpoint.
 STREAM_LIMIT = 300
@@ -18,6 +23,9 @@ DEFAULT_AUDIT_LIMIT = 50
 
 #: Default page size for the seam history.
 DEFAULT_SEAM_LIMIT = 20
+
+#: Endpoint scope used when deduplicating coil change commands.
+COIL_CHANGE_SCOPE = "exit.coil-change"
 
 
 class ApiParamError(ValueError):
@@ -55,6 +63,7 @@ class Api:
     def __init__(self, line: Line) -> None:
         self.line = line
         self.stream: list[Event] = []
+        self.commands = Idempotency()
         self._unsubscribe = line.subscribe(self._collect)
 
     def _collect(self, event: Event) -> None:
@@ -239,8 +248,22 @@ class Api:
         return {"ok": True, "cycles": self.line.dry.heat_cycles()}
 
     def coil_change(self, request: Request) -> dict[str, object]:
-        self.line.coil_change()
-        return {"ok": True}
+        # A network retry carries the same ``cmd`` value as the original;
+        # without it the physical seam guard still blocks a second cut, but
+        # the command-level reply then cannot be deduplicated.
+        command_id = request.args.get("cmd", "")
+
+        def run() -> dict[str, object]:
+            self.line.coil_change()
+            return {"ok": True}
+
+        if not command_id:
+            return run()
+        payload, replay = self.commands.run(COIL_CHANGE_SCOPE, command_id, run)
+        if replay:
+            payload[REPLAY_MARKER] = True
+            LOGGER.info("suppressed repeated coil change command %s", command_id)
+        return payload
 
     def exit_taper(self, request: Request) -> dict[str, object]:
         taper = self.line.taper_exit(

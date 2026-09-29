@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from flask.testing import FlaskClient
 
+from linecontrol.domain.kinds import EventKind
+from linecontrol.line.machine import Line
+
 
 def test_state_and_static(client: FlaskClient) -> None:
     response = client.get("/api/state")
@@ -142,3 +145,53 @@ def test_sequence_clear_endpoint(client: FlaskClient) -> None:
     client.post("/api/entry/sample?value=1")
     assert client.post("/api/sequence/clear").status_code == 200
     assert client.get("/api/sequence").get_json()["sequence"]["steps"] == []
+
+
+def _ready_for_coil_change(line: Line) -> None:
+    """Drive the line to the point where the exit shear is armed."""
+
+    line.load_coil("C-1", 60.0)
+    line.weld_and_speedup()
+    line.start_acid_loop(4.6)
+    line.set_strip_speed(1.5)
+    line.splice_and_refresh(90.0)
+
+
+def test_a_retried_coil_change_command_is_suppressed(
+    client: FlaskClient, line: Line
+) -> None:
+    _ready_for_coil_change(line)
+
+    first = client.post("/api/exit/coil-change?cmd=CC-001")
+    assert first.status_code == 200
+    body = first.get_json()
+    assert body["ok"] is True
+    assert body.get("replay") is not True
+
+    # the network retry carries the same command id
+    retry = client.post("/api/exit/coil-change?cmd=CC-001")
+    assert retry.status_code == 200
+    assert retry.get_json() == {"ok": True, "replay": True}
+
+    # the ledger keeps exactly one cut and one coil-change pair
+    shears = line.audit_query(EventKind.SHEAR, 10)
+    coil_done = [
+        event
+        for event in line.audit_query(EventKind.COIL, 10)
+        if event.message == "coil changed"
+    ]
+    assert len(shears) == 1
+    assert len(coil_done) == 1
+
+
+def test_a_coil_change_without_a_command_id_still_cuts_once(
+    client: FlaskClient, line: Line
+) -> None:
+    _ready_for_coil_change(line)
+    assert client.post("/api/exit/coil-change").status_code == 200
+
+    # no command id: the physical seam guard blocks the second cut
+    retry = client.post("/api/exit/coil-change")
+    assert retry.status_code == 409
+    assert retry.get_json()["detail"]["code"] == "seam-sheared"
+    assert len(line.audit_query(EventKind.SHEAR, 10)) == 1

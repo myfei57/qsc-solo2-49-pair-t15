@@ -8,6 +8,7 @@ from enum import Enum
 class ExitErrorCode(str, Enum):
     RINSE_ACTIVE = "rinse-active"
     TRACK_STALE = "track-stale"
+    SEAM_SHEARED = "seam-sheared"
 
 
 class ExitError(RuntimeError):

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from linecontrol.bus import EventBus
@@ -52,6 +54,25 @@ def test_restore_track_reads_a_snapshot(tmp_path) -> None:
     strip.restore_track(TrackSnapshot(position=33.0, seam_id="seam-3"))
     assert strip.track_position() == pytest.approx(33.0)
     assert strip.seam_id() == "seam-3"
+
+
+def test_sheared_marker_is_cleared_by_a_fresh_track_point(tmp_path) -> None:
+    strip, _, _ = build(tmp_path)
+    strip.track_refresh(64.0, "seam-9")
+    assert strip.seam_sheared() is False
+    strip.mark_sheared()
+    assert strip.seam_sheared() is True
+    snapshot = TrackSnapshot.from_dict(
+        json.loads(strip.store.load(KEY_TRACK).decode("utf-8"))
+    )
+    assert snapshot.sheared is True
+    # a new weld seam arms the shear again
+    strip.track_refresh(70.0, "seam-10")
+    assert strip.seam_sheared() is False
+    # a position-only update also rearms for the same seam
+    strip.mark_sheared()
+    strip.track_update(71.0)
+    assert strip.seam_sheared() is False
 
 
 def test_speed_validation_and_travel(tmp_path) -> None:

@@ -12,6 +12,7 @@ SAG_PER_GAIN_POINT = 10.0
 class StripState:
     track: float = 0.0
     seam_id: str = ""
+    seam_sheared: bool = False
     running: bool = True
     tail_dirty: bool = True
     speed: float = 0.0

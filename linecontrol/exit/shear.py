@@ -13,7 +13,13 @@ class ShearOps:
     def shear(self) -> float:
         if not self.strip.shear_permit():
             raise ExitError(ExitErrorCode.TRACK_STALE, "weld track stale")
+        if self.strip.seam_sheared():
+            raise ExitError(
+                ExitErrorCode.SEAM_SHEARED,
+                "tracked seam already sheared; ignoring repeated cut",
+            )
         self.data.shear_pos = self.strip.track_position() + self.data.shear_offset
+        self.strip.mark_sheared()
         self.bus.publish(
             Event(
                 kind=EventKind.SHEAR,

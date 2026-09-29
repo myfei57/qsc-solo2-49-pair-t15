@@ -8,7 +8,7 @@ from linecontrol.domain.events import Event, utcnow
 from linecontrol.domain.kinds import STREAM_KINDS, EventKind
 from linecontrol.domain.machine import IllegalTransition, StateMachine
 from linecontrol.domain.phase import Phase
-from linecontrol.domain.records import LatchSnapshot, TensionSnapshot
+from linecontrol.domain.records import LatchSnapshot, TensionSnapshot, TrackSnapshot
 
 
 def test_event_round_trip_preserves_fields() -> None:
@@ -58,6 +58,15 @@ def test_snapshot_records_round_trip() -> None:
     assert LatchSnapshot.from_dict(latch.to_dict()) == latch
     tension = TensionSnapshot(value=91.0, gain=1.2)
     assert TensionSnapshot.from_dict(tension.to_dict()) == tension
+
+
+def test_track_snapshot_keeps_the_sheared_marker() -> None:
+    track = TrackSnapshot(position=88.0, seam_id="seam-7", sheared=True)
+    restored = TrackSnapshot.from_dict(track.to_dict())
+    assert restored == track
+    # snapshots written before the marker existed default to an uncut seam
+    legacy = TrackSnapshot.from_dict({"position": 1.0, "seam_id": "s"})
+    assert legacy.sheared is False
 
 
 def test_phase_values_are_stable_strings() -> None:

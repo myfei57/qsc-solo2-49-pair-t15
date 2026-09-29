@@ -121,12 +121,14 @@ class TrackSnapshot:
     position: float = 0.0
     seam_id: str = ""
     saved: datetime = field(default_factory=utcnow)
+    sheared: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "position": self.position,
             "seam_id": self.seam_id,
             "saved": self.saved.isoformat(),
+            "sheared": self.sheared,
         }
 
     @classmethod
@@ -135,6 +137,7 @@ class TrackSnapshot:
             position=float(raw.get("position", 0.0)),
             seam_id=str(raw.get("seam_id", "")),
             saved=_stamp(raw.get("saved")),
+            sheared=bool(raw.get("sheared", False)),
         )
 
 

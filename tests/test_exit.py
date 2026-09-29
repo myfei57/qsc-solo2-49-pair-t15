@@ -84,6 +84,49 @@ def test_coil_change_stops_at_a_stale_track(tmp_path) -> None:
     assert section.last_shear() == pytest.approx(0.0)
 
 
+def test_a_seam_can_only_be_sheared_once(tmp_path) -> None:
+    section = build(tmp_path)
+    with_track(section)
+    assert section.strip.seam_sheared() is False
+    assert section.shear() == pytest.approx(120.0)
+    assert section.strip.seam_sheared() is True
+
+    # a network-retry of the cut is recognised and blocked before the knife moves
+    with pytest.raises(ExitError) as caught:
+        section.shear()
+    assert caught.value.code is ExitErrorCode.SEAM_SHEARED
+
+    with pytest.raises(ExitError) as caught:
+        section.coil_change()
+    assert caught.value.code is ExitErrorCode.SEAM_SHEARED
+
+
+def test_a_fresh_track_point_arms_the_shear_again(tmp_path) -> None:
+    section = build(tmp_path)
+    with_track(section, position=120.0)
+    section.shear()
+    with pytest.raises(ExitError):
+        section.shear()
+    section.strip.track_refresh(150.0, "seam-2")
+    assert section.strip.seam_sheared() is False
+    assert section.shear() == pytest.approx(150.0)
+
+
+def test_sheared_state_survives_recovery(tmp_path) -> None:
+    section = build(tmp_path)
+    with_track(section)
+    section.shear()
+
+    rebuilt = build(tmp_path)
+    rebuilt.strip.restore_track(
+        TrackSnapshot(position=120.0, seam_id="seam-1", sheared=True)
+    )
+    assert rebuilt.strip.seam_sheared() is True
+    with pytest.raises(ExitError) as caught:
+        rebuilt.shear()
+    assert caught.value.code is ExitErrorCode.SEAM_SHEARED
+
+
 def test_taper_setpoint_and_weight(tmp_path) -> None:
     section = build(tmp_path)
     assert section.taper_setpoint(50.0, 0.0) == pytest.approx(50.0)
