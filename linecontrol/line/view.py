@@ -68,6 +68,7 @@ class ViewOps:
             "alarms": self.audit.active_alarms(),
             "alarmActive": self.audit.alarm_active("weld-overcurrent"),
             "sequence": self.seq.snapshot(),
+            "idempotency": self.guard.snapshot(),
         }
 
     def run_report(self) -> dict[str, object]:

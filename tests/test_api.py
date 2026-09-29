@@ -4,6 +4,102 @@ from __future__ import annotations
 
 from flask.testing import FlaskClient
 
+from linecontrol.domain.kinds import EventKind
+from linecontrol.domain.records import TrackSnapshot
+
+
+def _prepare_coil_change(client: FlaskClient) -> None:
+    """Put the exit section in the state in which a coil change can cut."""
+
+    line = client.application.config["LINE_API"].line
+    line.load_coil("C-9", 90.0)
+    line.strip.restore_track(TrackSnapshot(position=120.0, seam_id="seam-1"))
+    line.pickle.rinse_stop()
+
+
+def test_coil_change_retry_with_same_token_cuts_once(client: FlaskClient) -> None:
+    _prepare_coil_change(client)
+    line = client.application.config["LINE_API"].line
+
+    first = client.post(
+        "/api/exit/coil-change",
+        headers={"Idempotency-Key": "change-001"},
+    )
+    assert first.status_code == 200
+    assert first.get_json()["applied"] is True
+    assert first.get_json()["duplicate"] is False
+    assert line.exit.last_shear() == pytest.approx(120.0)
+
+    _prepare_coil_change(client)
+    retry = client.post(
+        "/api/exit/coil-change",
+        headers={"Idempotency-Key": "change-001"},
+    )
+    assert retry.status_code == 200
+    body = retry.get_json()
+    assert body["duplicate"] is True
+    assert body["applied"] is False
+    assert line.exit.last_shear() == pytest.approx(120.0)
+
+    coil_events = [
+        event
+        for event in client.get("/api/audit?kind=coil&limit=50").get_json()["events"]
+        if event["source"] == "exit" and event["message"] == "changed"
+    ]
+    assert len(coil_events) == 1
+
+
+def test_coil_change_retry_without_token_is_caught_in_window(client: FlaskClient) -> None:
+    _prepare_coil_change(client)
+    line = client.application.config["LINE_API"].line
+
+    first = client.post("/api/exit/coil-change")
+    assert first.get_json()["applied"] is True
+    _prepare_coil_change(client)
+
+    retry = client.post("/api/exit/coil-change")
+    assert retry.get_json()["duplicate"] is True
+    assert line.exit.last_shear() == pytest.approx(120.0)
+    coil_events = client.get("/api/audit?kind=coil&limit=50").get_json()["events"]
+    assert sum(event["message"] == "changed" and event["source"] == "exit" for event in coil_events) == 1
+
+
+def test_coil_change_query_token_beats_header_when_absent(client: FlaskClient) -> None:
+    _prepare_coil_change(client)
+    first = client.post("/api/exit/coil-change?token=change-q1")
+    assert first.get_json()["applied"] is True
+    _prepare_coil_change(client)
+    retry = client.post("/api/exit/coil-change?token=change-q1")
+    assert retry.get_json()["duplicate"] is True
+
+
+def test_failed_coil_change_can_be_retried(client: FlaskClient) -> None:
+    # Track is stale, so the cut fails; the guard must not remember it.
+    line = client.application.config["LINE_API"].line
+    line.load_coil("C-9", 90.0)
+    line.pickle.rinse_stop()
+
+    failed = client.post(
+        "/api/exit/coil-change",
+        headers={"Idempotency-Key": "change-fail"},
+    )
+    assert failed.status_code == 409
+
+    _prepare_coil_change(client)
+    retry = client.post(
+        "/api/exit/coil-change",
+        headers={"Idempotency-Key": "change-fail"},
+    )
+    assert retry.status_code == 200
+    assert retry.get_json()["applied"] is True
+
+
+def test_state_reports_idempotency_guard(client: FlaskClient) -> None:
+    guard = client.get("/api/state").get_json()["state"]["idempotency"]
+    assert guard["duplicates"] == 0
+    assert guard["tracked"] >= 0
+    assert guard["tokenTtlSec"] > guard["bareTtlSec"]
+
 
 def test_state_and_static(client: FlaskClient) -> None:
     response = client.get("/api/state")

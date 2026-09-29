@@ -19,6 +19,9 @@ DEFAULT_AUDIT_LIMIT = 50
 #: Default page size for the seam history.
 DEFAULT_SEAM_LIMIT = 20
 
+#: Header an operator console sends on a command and keeps on its retries.
+IDEMPOTENCY_HEADER = "Idempotency-Key"
+
 
 class ApiParamError(ValueError):
     """Raised when a query parameter is missing or malformed."""
@@ -27,6 +30,15 @@ class ApiParamError(ValueError):
         super().__init__(f"invalid value for {name!r}: {raw!r}")
         self.name = name
         self.raw = raw
+
+
+def idempotency_token(request: Request, name: str = "token") -> str:
+    """Pick the retry token from the header, falling back to a query field."""
+
+    header = request.headers.get(IDEMPOTENCY_HEADER, "")
+    if header:
+        return header.strip()
+    return request.args.get(name, "").strip()
 
 
 def float_param(request: Request, name: str) -> float:
@@ -239,8 +251,12 @@ class Api:
         return {"ok": True, "cycles": self.line.dry.heat_cycles()}
 
     def coil_change(self, request: Request) -> dict[str, object]:
-        self.line.coil_change()
-        return {"ok": True}
+        decision = self.line.request_coil_change(idempotency_token(request))
+        return {
+            "ok": True,
+            "duplicate": decision.duplicate,
+            "applied": not decision.duplicate,
+        }
 
     def exit_taper(self, request: Request) -> dict[str, object]:
         taper = self.line.taper_exit(

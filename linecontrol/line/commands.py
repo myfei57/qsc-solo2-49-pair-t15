@@ -8,9 +8,13 @@ from ..domain.records import TensionSnapshot, WeldRecord
 from ..pickle.dosing import DosePlan
 from ..pump.errors import PumpError, PumpErrorCode
 from ..tension.state import RampPlan
+from .idempotency import GuardDecision
 
 #: Alarm identifier raised for a welder overcurrent trip.
 WELD_OVER_CURRENT = "weld-overcurrent"
+
+#: Name under which a coil change is remembered by the idempotency guard.
+COIL_CHANGE_OP = "coil-change"
 
 
 class CommandOps:
@@ -118,3 +122,22 @@ class CommandOps:
         if kind is None:
             return self.audit.recent(limit)
         return self.audit.query(kind, limit)
+
+    def request_coil_change(self, token: str = "") -> GuardDecision:
+        """Run a coil change unless this request is a retried duplicate.
+
+        The guard sees the command through so that a network retry of the
+        same operator action neither shears again nor writes the coil-change
+        ledger a second time.
+        """
+
+        decision = self.guard.begin(COIL_CHANGE_OP, token)
+        if not decision.allow:
+            return decision
+        try:
+            self.coil_change()
+        except Exception:
+            self.guard.discard(COIL_CHANGE_OP, token)
+            raise
+        self.guard.commit(COIL_CHANGE_OP, token)
+        return decision

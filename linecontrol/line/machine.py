@@ -18,6 +18,7 @@ from ..tension.roller import Roller
 from ..weld.welder import Welder
 from ..store.backup import BackupSummary
 from .commands import CommandOps
+from .idempotency import GuardDecision, IdempotencyGuard
 from .recovery import RecoveryOps
 from .sequence import Sequence
 from .view import ViewOps
@@ -48,6 +49,7 @@ class Line(WorkflowOps, CommandOps, RecoveryOps, ViewOps):
         self.coil_no = 0
         self.handle = ""
         self.seq = Sequence()
+        self.guard = IdempotencyGuard()
         self.last_backup: BackupSummary | None = None
         self._audit_unsubscribe = self.subscribe(self.audit.record)
 
